@@ -1,117 +1,91 @@
 package finder
 
 import (
-	"log"
-	"io/ioutil"
+	"os"
 	"path/filepath"
-	"bytes"
+	"github.com/pkg/errors"
+	"fmt"
+	"github.com/duffpl/go-finder/mimechecker"
 )
 
-type FilterFunction func(entry *FileEntry) bool
-
 type Finder struct {
-	filters []FilterFunction
+	filters []func(*FileInfoEx) (bool, error)
+	err     error
+}
+
+var (
+	stdGlobber globber
+	stdMimeChecker mimechecker.Checker
+)
+
+func init() {
+	stdGlobber = &doubleStarGlobber{}
+	stdMimeChecker = mimechecker.NewMulti(mimechecker.NewGoHttp(), mimechecker.NewGoMime())
 }
 
 func New() *Finder {
 	return &Finder{}
 }
 
-func (f *Finder) Find(rootPath string) (result []*FileEntry, err error){
-	absoluteRootPath, err := filepath.Abs(rootPath)
+func (f *Finder) Glob(glob string, relativeTo string) (result []*FileInfoEx, err error) {
+	globResult, err := stdGlobber.Glob(glob)
+	fmt.Println(err)
 	if err != nil {
+		err = errors.Wrap(err, "Glob:stdGlobber")
 		return
 	}
-	result = f.getListing(absoluteRootPath, absoluteRootPath)
-
+	for _, globItem := range globResult {
+		fileInfo, infoErr := newFileInfoEx(globItem, relativeTo)
+		if infoErr != nil {
+			err = errors.Wrap(infoErr, "Glob:process")
+			return
+		}
+		if f.checkFilters(fileInfo) {
+			result = append(result, fileInfo)
+		}
+	}
 	return
 }
 
-
-func (f *Finder) checkFilters(input *FileEntry) bool {
+func (f *Finder) checkFilters(input *FileInfoEx) bool {
 	for _, filterFunction := range f.filters {
-		if !filterFunction(input) {
+		matched, _ := filterFunction(input)
+		if !matched {
 			return false
 		}
 	}
 	return true
 }
 
-func (f *Finder) addFilter(ff FilterFunction) {
-	f.filters = append(f.filters, ff)
+func (f *Finder) addFilter(filter func(fiex *FileInfoEx) (bool, error)) {
+	f.filters = append(f.filters, filter)
 }
 
-func (f *Finder) getListing(dirPath string, sourcePath string) (result []*FileEntry) {
-	files, err := ioutil.ReadDir(dirPath)
+func newFileInfoEx(path string, relTo string) (result *FileInfoEx, err error) {
+	defer func() {
+		if err != nil {
+			err = errors.Wrap(err, "cannot create FileInfoEx")
+		}
+	}()
+	stat, err := os.Stat(path)
 	if err != nil {
-		log.Fatal(err)
+		err = errors.Wrap(err, "os.Stat")
+		return
 	}
-	for _,file := range files {
-		absolutePath := dirPath + "/" +file.Name()
-		relativePath := absolutePath[len(sourcePath)+1:]
-		entry := newFileEntryFromFileInfo(file)
-		entry.AbsolutePath = absolutePath
-		entry.RelativePath = relativePath
-		if !f.checkFilters(entry) {
-			continue
-		}
-		result = append(result, entry)
-		if entry.IsDir {
-			result = append(result, f.getListing(absolutePath, sourcePath)...)
-		}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		err = errors.Wrap(err, "filepath.Abs")
+		return
 	}
-	return
-}
-
-type FileCollection []*FileEntry
-
-type CompareResult struct {
-	MissingInSource DifferenceResult
-	MissingInDestination DifferenceResult
-}
-
-type DifferenceResult struct {
-	Missing FileCollection
-	Different FileCollection
-}
-var TotalCompares int = 0
-func CompareCollections(src FileCollection, dst FileCollection) CompareResult {
-	return CompareResult{
-		MissingInSource: getDifference(dst, src),
-		MissingInDestination: getDifference(src, dst),
+	rel, err := filepath.Rel(relTo, abs)
+	if err != nil {
+		err = errors.Wrap(err, "filepath.Rel")
+		return
 	}
-}
-
-
-func getDifference(src FileCollection, dst FileCollection) (result DifferenceResult) {
-	for _, srcFile := range src {
-		switch searchResult := isEntryInCollection(srcFile, dst); searchResult {
-		case ItemMissing:
-			result.Missing = append(result.Missing, srcFile)
-		case ItemDiffers:
-			result.Different = append(result.Different, srcFile)
-		}
+	result = &FileInfoEx{
+		FileInfo:     stat,
+		AbsolutePath: path,
+		RelativePath: rel,
 	}
 	return
 }
-
-func isEntryInCollection(entry *FileEntry, collection FileCollection) CollectionSearchResult {
-	for _, entryInCollection := range collection {
-		TotalCompares++
-		if entryInCollection.RelativePath == entry.RelativePath {
-			if !bytes.Equal(entryInCollection.Checksum, entry.Checksum) {
-				return ItemDiffers
-			}
-			return ItemFound
-		}
-	}
-	return ItemMissing
-}
-
-type CollectionSearchResult int8
-
-const (
-	ItemMissing CollectionSearchResult = iota
-	ItemDiffers
-	ItemFound
-)
