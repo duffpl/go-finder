@@ -5,8 +5,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"sort"
 	"github.com/duffpl/go-finder/os"
-	"time"
-	os2 "os"
 )
 
 func TestFinder_Size_integration(t *testing.T) {
