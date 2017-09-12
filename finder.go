@@ -1,55 +1,136 @@
 package finder
 
 import (
-	"os"
-	"path/filepath"
 	"github.com/pkg/errors"
-	"fmt"
 	"github.com/duffpl/go-finder/mimechecker"
+	"github.com/duffpl/go-finder/os"
+	"sort"
+	"github.com/bmatcuk/doublestar"
+	"crypto/md5"
+	os2 "os"
+	"io"
+	"sync"
 )
+
+
+type GlobFunc func(pattern string) (result []os.FileInfoEx, err error)
 
 type Finder struct {
-	filters []func(*FileInfoEx) (bool, error)
-	err     error
+	numCheckers int
+	globFunc GlobFunc
+	filters []struct {
+		callback func(ex os.FileInfoEx) (bool, error)
+		order  int
+	}
+	err error
 }
 
-var (
-	stdGlobber globber
-	stdMimeChecker mimechecker.Checker
+var(
+	defaultGlobFunc func(pattern string) (result []os.FileInfoEx, err error)
+	defaultChecksumCallback func(path string) (result []byte, err error)
+	defaultMimeCallback func(path string) (result string, err error)
+	defaultMimeChecker mimechecker.Checker
+	defaultCheckersConcurrency int = 8
 )
 
-func init() {
-	stdGlobber = &doubleStarGlobber{}
-	stdMimeChecker = mimechecker.NewMulti(mimechecker.NewGoHttp(), mimechecker.NewGoMime())
-}
-
-func New() *Finder {
-	return &Finder{}
-}
-
-func (f *Finder) Glob(glob string, relativeTo string) (result []*FileInfoEx, err error) {
-	globResult, err := stdGlobber.Glob(glob)
-	fmt.Println(err)
+func MD5ByPath(path string) (result []byte, err error) {
+	checksumWriter := md5.New()
+	handle, err := os2.Open(path)
 	if err != nil {
-		err = errors.Wrap(err, "Glob:stdGlobber")
+		err = errors.Wrap(err, "os.Open")
 		return
 	}
-	for _, globItem := range globResult {
-		fileInfo, infoErr := newFileInfoEx(globItem, relativeTo)
-		if infoErr != nil {
-			err = errors.Wrap(infoErr, "Glob:process")
-			return
-		}
-		if f.checkFilters(fileInfo) {
-			result = append(result, fileInfo)
-		}
+	_, err = io.Copy(checksumWriter, handle)
+	if err != nil {
+		err = errors.Wrap(err, "io.Copy")
+		return
 	}
+	defer handle.Close()
+	result = checksumWriter.Sum(nil)
 	return
 }
 
-func (f *Finder) checkFilters(input *FileInfoEx) bool {
-	for _, filterFunction := range f.filters {
-		matched, _ := filterFunction(input)
+func init() {
+	defaultMimeChecker = mimechecker.NewMulti(mimechecker.NewGoHttp(), mimechecker.NewGoMime())
+	defaultChecksumCallback = MD5ByPath
+	defaultMimeCallback = func(path string) (result string, err error) {
+		return defaultMimeChecker.TypeByFile(path)
+	}
+	defaultGlobFunc = func(pattern string) (result []os.FileInfoEx, err error) {
+		paths, err := doublestar.Glob(pattern)
+		if err != nil {
+			err = errors.Wrap(err, "glob")
+			return
+		}
+		return os.NewCollectionFromPaths(paths, defaultChecksumCallback, defaultMimeCallback)
+	}
+}
+
+func New() *Finder {
+	return new(Finder).
+	SetGlobFunc(defaultGlobFunc).
+	SetCheckerConcurrency(defaultCheckersConcurrency)
+}
+
+func (f *Finder) SetGlobFunc(gf GlobFunc) *Finder {
+	f.globFunc = gf
+	return f
+}
+
+func (f *Finder) SetCheckerConcurrency(num int) *Finder {
+	if num <= 0 {
+		f.err = errors.New("checkers count must be larger than 0")
+	} else {
+		f.numCheckers = num
+	}
+	return f
+}
+
+func (f *Finder) Glob(pattern string) (result []os.FileInfoEx, err error) {
+	if f.err != nil {
+		err = f.err
+		return
+	}
+	globResult, err := f.globFunc(pattern)
+	if err != nil {
+		err = errors.Wrap(err, "glob")
+		return
+	}
+	checkersInput := make(chan os.FileInfoEx)
+	checkersOutput := make(chan os.FileInfoEx)
+	wg := &sync.WaitGroup{}
+
+	wg.Add(len(globResult))
+	for i:=0; i<f.numCheckers; i++ {
+		go func() {
+			for fex := range checkersInput {
+				if f.checkFilters(fex) {
+					checkersOutput<-fex
+				} else {
+					wg.Done()
+				}
+			}
+		}()
+	}
+
+	go func() {
+		for fex := range checkersOutput {
+			result = append(result, fex)
+			wg.Done()
+		}
+	}()
+	for _, globItem := range globResult {
+		checkersInput<-globItem
+	}
+	close(checkersInput)
+	wg.Wait()
+	close(checkersOutput)
+	return
+}
+
+func (f *Finder) checkFilters(input os.FileInfoEx) bool {
+	for _, filter := range f.filters {
+		matched, _ := filter.callback(input)
 		if !matched {
 			return false
 		}
@@ -57,35 +138,12 @@ func (f *Finder) checkFilters(input *FileInfoEx) bool {
 	return true
 }
 
-func (f *Finder) addFilter(filter func(fiex *FileInfoEx) (bool, error)) {
-	f.filters = append(f.filters, filter)
-}
-
-func newFileInfoEx(path string, relTo string) (result *FileInfoEx, err error) {
-	defer func() {
-		if err != nil {
-			err = errors.Wrap(err, "cannot create FileInfoEx")
-		}
-	}()
-	stat, err := os.Stat(path)
-	if err != nil {
-		err = errors.Wrap(err, "os.Stat")
-		return
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		err = errors.Wrap(err, "filepath.Abs")
-		return
-	}
-	rel, err := filepath.Rel(relTo, abs)
-	if err != nil {
-		err = errors.Wrap(err, "filepath.Rel")
-		return
-	}
-	result = &FileInfoEx{
-		FileInfo:     stat,
-		AbsolutePath: path,
-		RelativePath: rel,
-	}
-	return
+func (f *Finder) addFilter(callback func(fiex os.FileInfoEx) (bool, error), order int) {
+	f.filters = append(f.filters, struct {
+		callback func(ex os.FileInfoEx) (bool, error)
+		order  int
+	}{callback, order})
+	sort.Slice(f.filters, func(i, j int) bool {
+		return f.filters[i].order < f.filters[j].order
+	})
 }

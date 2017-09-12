@@ -19,7 +19,7 @@ func TestHttp_ByPath(t *testing.T) {
 	}
 	checker := NewGoHttp()
 	for filename, expectedMime := range mimeMap {
-		result,_ := checker.ByPath("../example/" + filename)
+		result,_ := checker.TypeByFile("../example/" + filename)
 		assert.Equal(t, expectedMime, result, "file: %s", filename)
 	}
 }

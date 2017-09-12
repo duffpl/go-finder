@@ -7,7 +7,7 @@ import (
 
 type GoMime struct {}
 
-func (GoMime) ByPath(path string) (string, error) {
+func (GoMime) TypeByFile(path string) (string, error) {
 	return mime.TypeByExtension(filepath.Ext(path)), nil
 }
 

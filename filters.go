@@ -3,7 +3,8 @@ package finder
 import (
 	"github.com/duffpl/go-rgxp"
 	"github.com/pkg/errors"
-	"path/filepath"
+	"regexp"
+	"github.com/duffpl/go-finder/os"
 )
 
 type CmpOperator string
@@ -15,6 +16,12 @@ const (
 	LessOrEqual = "<="
 	Equal = "=="
 )
+
+var Errors = struct{
+	InvalidSizeOperator error
+}{
+	InvalidSizeOperator: errors.New("invalid size operator"),
+}
 
 func isCmpOperatorValid(cmpOp CmpOperator) bool {
 	validOperators := []CmpOperator{MoreThan, MoreOrEqual, LessThan, LessOrEqual, Equal}
@@ -31,10 +38,10 @@ func (f *Finder) Size(cmpOp CmpOperator, cmpSize int64) *Finder {
 		return f
 	}
 	if !isCmpOperatorValid(cmpOp) {
-		f.err = errors.New("invalid size compare operator")
+		f.err = Errors.InvalidSizeOperator
 		return f
 	}
-	f.addFilter(func(info *FileInfoEx) (cmpResult bool, err error) {
+	f.addFilter(func(info os.FileInfoEx) (cmpResult bool, err error) {
 		size := info.Size()
 		switch cmpOp {
 		case MoreThan:
@@ -49,49 +56,60 @@ func (f *Finder) Size(cmpOp CmpOperator, cmpSize int64) *Finder {
 			cmpResult = size == cmpSize
 		}
 		return
-	})
+	}, 1)
 	return f
 }
 
 func (f *Finder) Mime(mimeType string) *Finder {
-	f.addFilter(func(ex *FileInfoEx) (bool, error) {
-		mimeResult, err := stdMimeChecker.ByPath(ex.AbsolutePath)
-		if err != nil {
-			return false, err
+	f.addFilter(func(ex os.FileInfoEx) (result bool, err error) {
+		var mimeResult string
+		if mimeResult, err = ex.Mime(); err != nil {
+			return
 		}
 		return mimeResult == mimeType, nil
-	})
+	}, 50)
 	return f
 }
 
-func (f *Finder) Match(pattern string) *Finder {
-	f.addFilter(func(ex *FileInfoEx) (bool, error) {
-		return filepath.Match(pattern, ex.Name())
-	})
+func (f *Finder) MimeRegexp(pattern string) *Finder {
+	if f.err != nil { return f }
+	var compiled *regexp.Regexp
+	if compiled, f.err = regexp.Compile(pattern); f.err != nil {
+		return f
+	}
+	f.addFilter(func(ex os.FileInfoEx) (result bool, err error) {
+		var mimeResult string
+		if mimeResult, err = ex.Mime(); err != nil {
+			return
+		}
+		return compiled.Match([]byte(mimeResult)), nil
+	}, 50)
 	return f
 }
 
 func (f *Finder) RegexpName(patterns []string) *Finder {
-	compiled, err := rgxp.CompileAll(patterns)
-	if err != nil {
-		f.err = err
+	var compiled []*regexp.Regexp
+	if compiled, f.err = rgxp.CompileAll(patterns); f.err != nil {
 		return f
 	}
-	f.addFilter(func(ex *FileInfoEx) (bool, error) {
+	f.addFilter(func(ex os.FileInfoEx) (bool, error) {
 		return rgxp.MatchAny(compiled, ex.Name()), nil
-	})
+	}, 2)
 	return f
 }
 
 func (f *Finder) RegexpPath(patterns []string) *Finder {
-	compiled, err := rgxp.CompileAll(patterns)
-	if err != nil {
-		f.err = err
+	var compiled []*regexp.Regexp
+	if compiled, f.err = rgxp.CompileAll(patterns); f.err != nil {
 		return f
 	}
-	f.addFilter(func(ex *FileInfoEx) (bool, error) {
-		return rgxp.MatchAny(compiled, ex.AbsolutePath), nil
-	})
+	f.addFilter(func(ex os.FileInfoEx) (bool, error) {
+		if abs, err := ex.Abs(); err != nil {
+			return false, errors.Wrap(err, "RegexpPath")
+		} else {
+			return rgxp.MatchAny(compiled, abs), nil
+		}
+	}, 2)
 	return f
 }
 

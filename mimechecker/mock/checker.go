@@ -28,13 +28,13 @@ func (_m *MockChecker) EXPECT() *_MockCheckerRecorder {
 	return _m.recorder
 }
 
-func (_m *MockChecker) ByPath(path string) (string, error) {
-	ret := _m.ctrl.Call(_m, "ByPath", path)
+func (_m *MockChecker) TypeByFile(path string) (string, error) {
+	ret := _m.ctrl.Call(_m, "TypeByFile", path)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-func (_mr *_MockCheckerRecorder) ByPath(arg0 interface{}) *gomock.Call {
-	return _mr.mock.ctrl.RecordCall(_mr.mock, "ByPath", arg0)
+func (_mr *_MockCheckerRecorder) TypeByFile(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "TypeByFile", arg0)
 }

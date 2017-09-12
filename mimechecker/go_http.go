@@ -10,7 +10,7 @@ type goHttp struct {}
 
 const mimeOctet = "application/octet-stream"
 
-func (*goHttp) ByPath(path string) (m string, err error) {
+func (*goHttp) TypeByFile(path string) (m string, err error) {
 	defer func() {
 		if err != nil {
 			err = errors.New("cannot read mime from file:" + err.Error())
@@ -21,6 +21,7 @@ func (*goHttp) ByPath(path string) (m string, err error) {
 	if err != nil {
 		return
 	}
+	defer fh.Close()
 	_, err = fh.Read(buf)
 	if err != nil {
 		return
