@@ -3,132 +3,122 @@ package finder
 import (
 	"github.com/pkg/errors"
 	"github.com/duffpl/go-finder/mimechecker"
-	"github.com/duffpl/go-finder/os"
 	"sort"
 	"github.com/bmatcuk/doublestar"
-	"crypto/md5"
-	os2 "os"
-	"io"
 	"sync"
+	"github.com/duffpl/go-finder/checksum"
+	"github.com/duffpl/go-finder/file"
 )
-
-
-type GlobFunc func(pattern string) (result []os.FileInfoEx, err error)
 
 type Finder struct {
 	numCheckers int
-	globFunc GlobFunc
+	globFunc    FileInfoExGlobFunc
 	filters []struct {
-		callback func(ex os.FileInfoEx) (bool, error)
-		order  int
+		callback func(ex file.FileInfoEx) (bool, error)
+		order    int
 	}
-	err error
+	lastErr error
 }
 
-var(
-	defaultGlobFunc func(pattern string) (result []os.FileInfoEx, err error)
-	defaultChecksumCallback func(path string) (result []byte, err error)
-	defaultMimeCallback func(path string) (result string, err error)
-	defaultMimeChecker mimechecker.Checker
-	defaultCheckersConcurrency int = 8
+var (
+	defaultFileInfoExGlob            FileInfoExGlobFunc
+	defaultFilterCheckersConcurrency int = 8
 )
 
-func MD5ByPath(path string) (result []byte, err error) {
-	checksumWriter := md5.New()
-	handle, err := os2.Open(path)
-	if err != nil {
-		err = errors.Wrap(err, "os.Open")
-		return
-	}
-	_, err = io.Copy(checksumWriter, handle)
-	if err != nil {
-		err = errors.Wrap(err, "io.Copy")
-		return
-	}
-	defer handle.Close()
-	result = checksumWriter.Sum(nil)
-	return
-}
-
 func init() {
-	defaultMimeChecker = mimechecker.NewMulti(mimechecker.NewGoHttp(), mimechecker.NewGoMime())
-	defaultChecksumCallback = MD5ByPath
-	defaultMimeCallback = func(path string) (result string, err error) {
-		return defaultMimeChecker.TypeByFile(path)
-	}
-	defaultGlobFunc = func(pattern string) (result []os.FileInfoEx, err error) {
-		paths, err := doublestar.Glob(pattern)
-		if err != nil {
-			err = errors.Wrap(err, "glob")
-			return
-		}
-		return os.NewCollectionFromPaths(paths, defaultChecksumCallback, defaultMimeCallback)
-	}
+	mc := mimechecker.NewMulti(mimechecker.NewGoHttp(), mimechecker.NewGoMime())
+	defaultFileInfoExGlob = NewLazyGlobber(doublestar.Glob, checksum.MD5ByPath, mc.TypeByFile)
 }
 
 func New() *Finder {
 	return new(Finder).
-	SetGlobFunc(defaultGlobFunc).
-	SetCheckerConcurrency(defaultCheckersConcurrency)
+		SetGlobFunc(defaultFileInfoExGlob).
+		SetCheckerConcurrency(defaultFilterCheckersConcurrency)
 }
 
-func (f *Finder) SetGlobFunc(gf GlobFunc) *Finder {
+func (f *Finder) SetGlobFunc(gf FileInfoExGlobFunc) *Finder {
 	f.globFunc = gf
 	return f
 }
 
 func (f *Finder) SetCheckerConcurrency(num int) *Finder {
 	if num <= 0 {
-		f.err = errors.New("checkers count must be larger than 0")
+		f.lastErr = errors.New("checkers count must be larger than 0")
 	} else {
 		f.numCheckers = num
 	}
 	return f
 }
 
-func (f *Finder) Glob(pattern string) (result []os.FileInfoEx, err error) {
-	if f.err != nil {
-		err = f.err
+func (f *Finder) Glob(pattern string) (result []file.FileInfoEx, err error) {
+	if f.lastErr != nil {
+		err = f.lastErr
 		return
 	}
-	globResult, err := f.globFunc(pattern)
-	if err != nil {
+	var globResult []file.FileInfoEx
+	if globResult, err = f.globFunc(pattern); err != nil {
 		err = errors.Wrap(err, "glob")
 		return
 	}
-	checkersInput := make(chan os.FileInfoEx)
-	checkersOutput := make(chan os.FileInfoEx)
 	wg := &sync.WaitGroup{}
-
 	wg.Add(len(globResult))
-	for i:=0; i<f.numCheckers; i++ {
+	filtersOutput := f.runFilters(16, wg, globResult)
+	createConsumer(filtersOutput, &result, wg)
+	wg.Wait()
+	return
+}
+
+func (f *Finder) createWorkers(cnt int, in <-chan file.FileInfoEx, out chan<- file.FileInfoEx, itemCount int, consumerWaitGroup *sync.WaitGroup) *sync.WaitGroup {
+	wg := &sync.WaitGroup{}
+	wg.Add(itemCount)
+	for i:=0;i<cnt;i++ {
 		go func() {
-			for fex := range checkersInput {
-				if f.checkFilters(fex) {
-					checkersOutput<-fex
+			for info := range in {
+				if f.checkFilters(info) {
+					consumerWaitGroup.Add(1)
+					out <- info
+				}
+				wg.Done()
+			}
+		}()
+	}
+	return wg
+}
+
+func (f *Finder) runFilters(workerCnt int, tasksWg *sync.WaitGroup, entries []file.FileInfoEx) (chan file.FileInfoEx) {
+	output := make(chan file.FileInfoEx)
+	in := make(chan file.FileInfoEx)
+	for i:=0;i<workerCnt;i++ {
+		go func() {
+			for info := range in {
+				if f.checkFilters(info) {
+					output <- info
 				} else {
-					wg.Done()
+					tasksWg.Done()
 				}
 			}
 		}()
 	}
-
 	go func() {
-		for fex := range checkersOutput {
-			result = append(result, fex)
-			wg.Done()
+		for _, entry := range entries {
+			in <- entry
 		}
+		close(in)
 	}()
-	for _, globItem := range globResult {
-		checkersInput<-globItem
-	}
-	close(checkersInput)
-	wg.Wait()
-	close(checkersOutput)
-	return
+	return output
 }
 
-func (f *Finder) checkFilters(input os.FileInfoEx) bool {
+
+func createConsumer(in chan file.FileInfoEx, result *[]file.FileInfoEx, tasksWg *sync.WaitGroup) {
+	go func() {
+		for info := range in {
+			*result = append(*result, info)
+			tasksWg.Done()
+		}
+	}()
+}
+
+func (f *Finder) checkFilters(input file.FileInfoEx) bool {
 	for _, filter := range f.filters {
 		matched, _ := filter.callback(input)
 		if !matched {
@@ -138,10 +128,10 @@ func (f *Finder) checkFilters(input os.FileInfoEx) bool {
 	return true
 }
 
-func (f *Finder) addFilter(callback func(fiex os.FileInfoEx) (bool, error), order int) {
+func (f *Finder) addFilter(callback func(fiex file.FileInfoEx) (bool, error), order int) {
 	f.filters = append(f.filters, struct {
-		callback func(ex os.FileInfoEx) (bool, error)
-		order  int
+		callback func(ex file.FileInfoEx) (bool, error)
+		order    int
 	}{callback, order})
 	sort.Slice(f.filters, func(i, j int) bool {
 		return f.filters[i].order < f.filters[j].order

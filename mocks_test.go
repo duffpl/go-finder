@@ -3,6 +3,7 @@ package finder
 import (
 	"time"
 	"os"
+	"github.com/duffpl/go-finder/file"
 )
 
 type mockFileInfoEx struct {
@@ -47,4 +48,10 @@ func (m *mockFileInfoEx) Checksum() (cs []byte, err error) {
 
 func (m *mockFileInfoEx) Mime() (r string, err error) {
 	return m.mime, nil
+}
+
+func newMockGlobFunc(result []file.FileInfoEx) FileInfoExGlobFunc {
+	return func(pattern string) ([]file.FileInfoEx, error) {
+		return result, nil
+	}
 }

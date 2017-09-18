@@ -1,10 +1,11 @@
 package finder
 
 import (
-	"github.com/duffpl/go-rgxp"
-	"github.com/pkg/errors"
 	"regexp"
-	"github.com/duffpl/go-finder/os"
+	"fmt"
+
+	"github.com/pkg/errors"
+	"github.com/duffpl/go-finder/file"
 )
 
 type CmpOperator string
@@ -23,6 +24,20 @@ var Errors = struct{
 	InvalidSizeOperator: errors.New("invalid size operator"),
 }
 
+// Checksum adds matching against checksum. Expected checksum should be hex encoded string
+func (f *Finder) Checksum(hexChecksum string) *Finder {
+	f.addFilter(func(fiex file.FileInfoEx) (result bool, err error) {
+		var fileChecksum []byte
+		if fileChecksum, err = fiex.Checksum(); err != nil {
+			err = errors.Wrap(err, "checksum")
+			return
+		}
+		result = fmt.Sprintf("%x", fileChecksum) == hexChecksum
+		return
+	}, 100)
+	return f
+}
+
 func isCmpOperatorValid(cmpOp CmpOperator) bool {
 	validOperators := []CmpOperator{MoreThan, MoreOrEqual, LessThan, LessOrEqual, Equal}
 	for _, vop := range validOperators {
@@ -33,15 +48,17 @@ func isCmpOperatorValid(cmpOp CmpOperator) bool {
 	return false
 }
 
+// Size adds matching against file size. First argument is operator type. Valid operators are available in
+// CmpOperator const. Returns error if operator isn't allowed
 func (f *Finder) Size(cmpOp CmpOperator, cmpSize int64) *Finder {
-	if f.err != nil {
+	if f.lastErr != nil {
 		return f
 	}
 	if !isCmpOperatorValid(cmpOp) {
-		f.err = Errors.InvalidSizeOperator
+		f.lastErr = Errors.InvalidSizeOperator
 		return f
 	}
-	f.addFilter(func(info os.FileInfoEx) (cmpResult bool, err error) {
+	f.addFilter(func(info file.FileInfoEx) (cmpResult bool, err error) {
 		size := info.Size()
 		switch cmpOp {
 		case MoreThan:
@@ -60,8 +77,9 @@ func (f *Finder) Size(cmpOp CmpOperator, cmpSize int64) *Finder {
 	return f
 }
 
+// Mime adds matching against MIME type of file
 func (f *Finder) Mime(mimeType string) *Finder {
-	f.addFilter(func(ex os.FileInfoEx) (result bool, err error) {
+	f.addFilter(func(ex file.FileInfoEx) (result bool, err error) {
 		var mimeResult string
 		if mimeResult, err = ex.Mime(); err != nil {
 			return
@@ -71,13 +89,15 @@ func (f *Finder) Mime(mimeType string) *Finder {
 	return f
 }
 
+// MimeRegexp adds matching against MIME type of file using regexp pattern. This is useful for finding files of given
+// type. E.g. to find all images > MimeRegexp("^image")
 func (f *Finder) MimeRegexp(pattern string) *Finder {
-	if f.err != nil { return f }
+	if f.lastErr != nil { return f }
 	var compiled *regexp.Regexp
-	if compiled, f.err = regexp.Compile(pattern); f.err != nil {
+	if compiled, f.lastErr = regexp.Compile(pattern); f.lastErr != nil {
 		return f
 	}
-	f.addFilter(func(ex os.FileInfoEx) (result bool, err error) {
+	f.addFilter(func(ex file.FileInfoEx) (result bool, err error) {
 		var mimeResult string
 		if mimeResult, err = ex.Mime(); err != nil {
 			return
@@ -87,29 +107,32 @@ func (f *Finder) MimeRegexp(pattern string) *Finder {
 	return f
 }
 
-func (f *Finder) RegexpName(patterns []string) *Finder {
-	var compiled []*regexp.Regexp
-	if compiled, f.err = rgxp.CompileAll(patterns); f.err != nil {
+// RegexpName adds matching against file name using regexp pattern.
+func (f *Finder) RegexpName(pattern string) *Finder {
+	var compiled *regexp.Regexp
+	if compiled, f.lastErr = regexp.Compile(pattern); f.lastErr != nil {
 		return f
 	}
-	f.addFilter(func(ex os.FileInfoEx) (bool, error) {
-		return rgxp.MatchAny(compiled, ex.Name()), nil
+	f.addFilter(func(ex file.FileInfoEx) (bool, error) {
+		return compiled.Match([]byte(ex.Name())), nil
 	}, 2)
 	return f
 }
 
-func (f *Finder) RegexpPath(patterns []string) *Finder {
-	var compiled []*regexp.Regexp
-	if compiled, f.err = rgxp.CompileAll(patterns); f.err != nil {
+// RegexpName adds matching against full file path using regexp pattern.
+func (f *Finder) RegexpPath(pattern string) *Finder {
+	var compiled *regexp.Regexp
+	if compiled, f.lastErr = regexp.Compile(pattern); f.lastErr != nil {
 		return f
 	}
-	f.addFilter(func(ex os.FileInfoEx) (bool, error) {
-		if abs, err := ex.Abs(); err != nil {
-			return false, errors.Wrap(err, "RegexpPath")
+	f.addFilter(func(ex file.FileInfoEx) (result bool, err error) {
+		var abs string
+		if abs, err = ex.Abs(); err != nil {
+			err = errors.Wrap(err, "RegexpPath")
 		} else {
-			return rgxp.MatchAny(compiled, abs), nil
+			result = compiled.Match([]byte(abs))
 		}
+		return
 	}, 2)
 	return f
 }
-
