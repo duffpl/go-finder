@@ -66,29 +66,12 @@ func (f *Finder) Glob(pattern string) (result []file.FileInfoEx, err error) {
 		err = errors.Wrap(err, "glob")
 		return
 	}
-	wg := &sync.WaitGroup{}
-	wg.Add(len(globResult))
-	filtersOutput := f.runFilters(16, wg, globResult)
-	createConsumer(filtersOutput, &result, wg)
-	wg.Wait()
+	tasksWG := &sync.WaitGroup{}
+	tasksWG.Add(len(globResult))
+	filtersOutput := f.runFilters(16, tasksWG, globResult)
+	createFiltersOutputConsumer(filtersOutput, &result, tasksWG)
+	tasksWG.Wait()
 	return
-}
-
-func (f *Finder) createWorkers(cnt int, in <-chan file.FileInfoEx, out chan<- file.FileInfoEx, itemCount int, consumerWaitGroup *sync.WaitGroup) *sync.WaitGroup {
-	wg := &sync.WaitGroup{}
-	wg.Add(itemCount)
-	for i:=0;i<cnt;i++ {
-		go func() {
-			for info := range in {
-				if f.checkFilters(info) {
-					consumerWaitGroup.Add(1)
-					out <- info
-				}
-				wg.Done()
-			}
-		}()
-	}
-	return wg
 }
 
 func (f *Finder) runFilters(workerCnt int, tasksWg *sync.WaitGroup, entries []file.FileInfoEx) (chan file.FileInfoEx) {
@@ -115,7 +98,7 @@ func (f *Finder) runFilters(workerCnt int, tasksWg *sync.WaitGroup, entries []fi
 }
 
 
-func createConsumer(in chan file.FileInfoEx, result *[]file.FileInfoEx, tasksWg *sync.WaitGroup) {
+func createFiltersOutputConsumer(in chan file.FileInfoEx, result *[]file.FileInfoEx, tasksWg *sync.WaitGroup) {
 	go func() {
 		for info := range in {
 			*result = append(*result, info)
