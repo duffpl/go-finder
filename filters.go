@@ -50,7 +50,8 @@ func isCmpOperatorValid(cmpOp CmpOperator) bool {
 }
 
 // Size adds matching against file size. First argument is operator type. Valid operators are available in
-// CmpOperator const. Returns error if operator isn't allowed
+// CmpOperator const. Returns error if operator isn't allowed.
+// Chains as AND operator
 func (f *Finder) Size(cmpOp CmpOperator, cmpSize int64) *Finder {
 	if f.lastErr != nil { return f }
 	if !isCmpOperatorValid(cmpOp) {

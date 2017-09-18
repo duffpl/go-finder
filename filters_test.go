@@ -48,7 +48,7 @@ func ExampleFinder_Size() {
 	for _, result := range results {
 		fmt.Println(result.Name())
 	}
-	fmt.Println("> 70 and < 150")
+	fmt.Println("> 70 AND < 150")
 	results, _ = New().Size(MoreThan, 70).Size(LessThan, 150).Glob("./test_files/size/*")
 	for _, result := range results {
 		fmt.Println(result.Name())
