@@ -7,7 +7,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/duffpl/go-finder/file"
 )
-
+// CmpOperator is string const enum for Size filter
 type CmpOperator string
 
 const (
@@ -26,6 +26,7 @@ var Errors = struct{
 
 // Checksum adds matching against checksum. Expected checksum should be hex encoded string
 func (f *Finder) Checksum(hexChecksum string) *Finder {
+	if f.lastErr != nil { return f }
 	f.addFilter(func(fiex file.FileInfoEx) (result bool, err error) {
 		var fileChecksum []byte
 		if fileChecksum, err = fiex.Checksum(); err != nil {

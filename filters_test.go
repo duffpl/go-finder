@@ -5,6 +5,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"sort"
 	"github.com/duffpl/go-finder/file"
+	"fmt"
 )
 
 func TestFinder_Size(t *testing.T) {
@@ -34,6 +35,31 @@ func TestFinder_Size(t *testing.T) {
 			assert.Equal(t, expectation.result, getFileNamesFromResult(result))
 		})
 	}
+}
+
+func ExampleFinder_Size() {
+	// test_files/ contains
+	//	size-50.dat - 50 bytes
+	//	size-100.dat - 100 bytes
+	//	size-150.dat - 150 bytes
+
+	fmt.Println(">= 100")
+	results, _ := New().Size(MoreOrEqual, 100).Glob("./test_files/size/*")
+	for _, result := range results {
+		fmt.Println(result.Name())
+	}
+	fmt.Println("> 70 and < 150")
+	results, _ = New().Size(MoreThan, 70).Size(LessThan, 150).Glob("./test_files/size/*")
+	for _, result := range results {
+		fmt.Println(result.Name())
+	}
+
+	// Output:
+	// >= 100
+	// size-100.dat
+	// size-150.dat
+	// > 70 and < 150
+	// size-100.dat
 }
 
 func TestFinder_Mime_integration(t *testing.T) {
