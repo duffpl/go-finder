@@ -51,9 +51,7 @@ func isCmpOperatorValid(cmpOp CmpOperator) bool {
 // Size adds matching against file size. First argument is operator type. Valid operators are available in
 // CmpOperator const. Returns error if operator isn't allowed
 func (f *Finder) Size(cmpOp CmpOperator, cmpSize int64) *Finder {
-	if f.lastErr != nil {
-		return f
-	}
+	if f.lastErr != nil { return f }
 	if !isCmpOperatorValid(cmpOp) {
 		f.lastErr = Errors.InvalidSizeOperator
 		return f
@@ -79,6 +77,7 @@ func (f *Finder) Size(cmpOp CmpOperator, cmpSize int64) *Finder {
 
 // Mime adds matching against MIME type of file
 func (f *Finder) Mime(mimeType string) *Finder {
+	if f.lastErr != nil { return f }
 	f.addFilter(func(ex file.FileInfoEx) (result bool, err error) {
 		var mimeResult string
 		if mimeResult, err = ex.Mime(); err != nil {
@@ -109,6 +108,7 @@ func (f *Finder) MimeRegexp(pattern string) *Finder {
 
 // RegexpName adds matching against file name using regexp pattern.
 func (f *Finder) RegexpName(pattern string) *Finder {
+	if f.lastErr != nil { return f }
 	var compiled *regexp.Regexp
 	if compiled, f.lastErr = regexp.Compile(pattern); f.lastErr != nil {
 		return f
@@ -121,6 +121,7 @@ func (f *Finder) RegexpName(pattern string) *Finder {
 
 // RegexpName adds matching against full file path using regexp pattern.
 func (f *Finder) RegexpPath(pattern string) *Finder {
+	if f.lastErr != nil { return f }
 	var compiled *regexp.Regexp
 	if compiled, f.lastErr = regexp.Compile(pattern); f.lastErr != nil {
 		return f
