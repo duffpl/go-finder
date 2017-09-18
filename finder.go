@@ -36,11 +36,16 @@ func New() *Finder {
 		SetCheckerConcurrency(defaultFilterCheckersConcurrency)
 }
 
+// SetGlobFunc sets function that is used for fetching list of FileInfoEx items used for filters. Default glob function
+// is one that creates "lazy" FileInfoExs and uses doublestar.Glob (https://github.com/bmatcuk/doublestar) as lister since
+// default Go globber doesn't repeat dir separator when using double asterisk
 func (f *Finder) SetGlobFunc(gf FileInfoExGlobFunc) *Finder {
 	f.globFunc = gf
 	return f
 }
 
+// SetCheckerConcurrency sets number of go routines that are used for checking filters. Default is 8. Usually I/O will
+// be bottleneck.
 func (f *Finder) SetCheckerConcurrency(num int) *Finder {
 	if num <= 0 {
 		f.lastErr = errors.New("checkers count must be larger than 0")
@@ -50,6 +55,7 @@ func (f *Finder) SetCheckerConcurrency(num int) *Finder {
 	return f
 }
 
+// Glob is used for fetching result list of files as slice of file.FileInfoEx items
 func (f *Finder) Glob(pattern string) (result []file.FileInfoEx, err error) {
 	if f.lastErr != nil {
 		err = f.lastErr
