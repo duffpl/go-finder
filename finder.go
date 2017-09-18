@@ -66,11 +66,11 @@ func (f *Finder) Glob(pattern string) (result []file.FileInfoEx, err error) {
 		err = errors.Wrap(err, "glob")
 		return
 	}
-	tasksWG := &sync.WaitGroup{}
-	tasksWG.Add(len(globResult))
-	filtersOutput := f.runFilters(16, tasksWG, globResult)
-	createFiltersOutputConsumer(filtersOutput, &result, tasksWG)
-	tasksWG.Wait()
+	tasksWg := &sync.WaitGroup{}
+	tasksWg.Add(len(globResult))
+	filtersOutput := f.runFilters(f.numCheckers, tasksWg, globResult)
+	createFiltersOutputConsumer(filtersOutput, &result, tasksWg)
+	tasksWg.Wait()
 	return
 }
 
